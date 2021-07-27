@@ -1,0 +1,77 @@
+---
+- name: install wget
+  yum:
+    name: wget
+    state: present
+
+- name: install openjdk
+  yum:
+    name: java-1.8.0-openjdk
+    state: present
+
+- name: download jenkins.repo
+  get_url:
+    url: http://pkg.jenkins-ci.org/redhat-stable/jenkins.repo
+    dest: /etc/yum.repos.d/jenkins.repo
+ 
+- name: install jenkins
+  yum:
+    name: jenkins
+    state: present
+    disable_gpg_check: True
+- name: start jenkins
+  systemd:
+    name: jenkins
+    state: started
+
+- name: enable jenkins
+  systemd:
+    name: jenkins
+    enabled: true
+
+- name: sleep for 30 seconds and continue with play
+  wait_for: timeout=30
+  delegate_to: localhost
+
+- name: read admin pwd
+  shell: cat /var/lib/jenkins/secrets/initialAdminPassword
+  register: adminpwd
+
+- name: unlock and add admin user
+  jenkins_script:
+    script: |
+      import jenkins.model.*
+      import hudson.security.*
+      def instance = Jenkins.getInstance()
+      def hudsonRealm = new HudsonPrivateSecurityRealm(false)
+      hudsonRealm.createAccount('jenkins', '${user_pwd}')
+      instance.setSecurityRealm(hudsonRealm)
+      def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+      strategy.setAllowAnonymousRead(false)
+      instance.setAuthorizationStrategy(strategy)
+      instance.save()
+    args:
+     user_pwd: admin
+    user: admin
+    password: "{{ adminpwd.stdout }}"
+
+- name: complete setup wizard
+  jenkins_script:
+    script: |
+      import static jenkins.model.Jenkins.instance as jenkins
+      import jenkins.install.InstallState
+      if (!jenkins.installState.isSetupComplete()) {
+        InstallState.INITIAL_SETUP_COMPLETED.initializeState()
+      }
+    user: admin
+    password: "{{ adminpwd.stdout }}"
+
+- name: install plugin
+  jenkins_plugin:
+    name: "{{ item }}"
+    state: latest
+    url_username: admin
+    url_password: "{{ adminpwd.stdout }}"
+  with_items: "{{ jenkins_plugins }}"
+
+
